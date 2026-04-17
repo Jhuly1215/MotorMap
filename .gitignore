@@ -1,0 +1,74 @@
+# Dependencies
+node_modules/
+jspm_packages/
+typings/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native Android and iOS folders (if they are generated)
+ios/
+android/
+
+# Build and Output
+build/
+bin/
+obj/
+out/
+*.map
+*.chunk.js
+
+# Logs and Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+*.log
+export_error.log
+
+# Testing
+coverage/
+__tests__/
+.nyc_output
+
+# Environment Variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+!.env.example
+
+# IDEs and Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.history/
+
+# OS Specific
+.DS_Store
+.DS_Store?
+._*
+Thumds.db
+desktop.ini
+
+# Vite
+vite.config.ts.timestamp-*
+vite.config.js.timestamp-*
+
+# Misc
+.cache/
+.npm/
+.eslintcache
+.stylelintcache
+.prettiercache
+package-lock.json.tmp

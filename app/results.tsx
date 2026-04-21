@@ -32,19 +32,19 @@ export default function ResultsScreen() {
         <Text style={styles.subtitle}>Has completado: {activity?.title}</Text>
 
         <View style={styles.starsRow}>
-          {[1, 2, 3].map(i => (
-            <Animated.View key={i} entering={ZoomIn.delay(800 + i * 200)}>
-              <Star
-                size={48}
-                fill={Colors.primary.mustard}
-                color={Colors.primary.mustard}
-                style={styles.star}
-              />
-            </Animated.View>
-          ))}
+          {state.lastAttempt && (
+            <View style={styles.resultsSummary}>
+               <Text style={styles.resultValue}>{state.lastAttempt.metrics.accuracy}%</Text>
+               <Text style={styles.resultLabel}>Precisión</Text>
+            </View>
+          )}
         </View>
 
-        <Text style={styles.praise}>¡Tus manos se mueven cada vez mejor! Sigue así para convertirte en un maestro del trazado.</Text>
+        <Text style={styles.praise}>
+          {state.lastAttempt?.metrics.accuracy && state.lastAttempt.metrics.accuracy > 80 
+            ? "¡Tus manos se mueven increiblemente! Sigue así."
+            : "¡Muy bien! Sigue practicando para mejorar tu precisión."}
+        </Text>
       </Animated.View>
 
       <View style={styles.actions}>
@@ -115,6 +115,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 16,
     marginBottom: 32,
+  },
+  resultsSummary: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'white',
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    borderWidth: 8,
+    borderColor: '#F0EDE6',
+  },
+  resultValue: {
+    fontSize: 48,
+    fontWeight: '800',
+    color: Colors.text.dark,
+  },
+  resultLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.text.medium,
+    textTransform: 'uppercase',
   },
   star: {
     shadowColor: Colors.primary.mustard,

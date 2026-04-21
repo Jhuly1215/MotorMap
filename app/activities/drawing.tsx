@@ -1,56 +1,102 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView } from 'react-native';
+import React, { useState, useCallback, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import { Spacing } from '../../constants/Spacing';
 import { useAppState } from '../../context/AppStateContext';
 import DrawingCanvas from '../../components/motormap/DrawingCanvas';
+import FeedbackOverlay from '../../components/motormap/FeedbackOverlay';
 import {
-  X,
   RotateCcw,
   HelpCircle,
   CheckCircle2,
   ChevronLeft
 } from 'lucide-react-native';
 import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
+import { Stroke, AttemptMetrics } from '../../types/drawing';
+import { analyzeAttempt } from '../../lib/TraceAnalysis';
+import { TEMPLATES } from '../../constants/Templates';
 
-// Simple S-shape template for demonstration
-const TEMPLATE_S = "M 100 200 C 100 100, 300 100, 300 200 S 100 300, 100 200";
-const TEMPLATE_LINE = "M 50 400 L 550 400";
-const TEMPLATE_CURVE = "M 50 300 Q 300 50, 550 300";
+const FEEDBACK_MESSAGES = [
+  "¡Qué buen trazo!",
+  "¡Muy bien!",
+  "¡Sigamos!",
+  "¡Lo estás haciendo genial!"
+];
 
 export default function DrawingActivityScreen() {
   const router = useRouter();
   const { state, completeActivity } = useAppState();
   const [isFinished, setIsFinished] = useState(false);
-  const [accuracy, setAccuracy] = useState(0);
+  const [attemptStrokes, setAttemptStrokes] = useState<Stroke[]>([]);
+  const [metrics, setMetrics] = useState<AttemptMetrics | null>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackMsg, setFeedbackMsg] = useState("");
 
   const activity = state.selectedActivity;
 
-  const handleComplete = (acc: number) => {
-    setAccuracy(acc);
-    setIsFinished(true);
-    if (activity) {
-      completeActivity(activity.id);
+  // Find template based on activity
+  const template = useMemo(() => {
+    if (activity?.id === '1') return TEMPLATES['line-simple'];
+    if (activity?.id === '5') return TEMPLATES['curve-basic'];
+    if (activity?.id === '2') return TEMPLATES['lane-s'];
+    return null;
+  }, [activity]);
+
+  const handleStrokeComplete = useCallback((stroke: Stroke) => {
+    setAttemptStrokes(prev => [...prev, stroke]);
+    
+    // Trigger fun feedback for good strokes
+    if (stroke.points.length > 20) {
+      setFeedbackMsg(FEEDBACK_MESSAGES[Math.floor(Math.random() * FEEDBACK_MESSAGES.length)]);
+      setShowFeedback(true);
+    }
+  }, []);
+
+  const handleFinish = () => {
+    if (!template) {
+      // Free draw logic
+      setIsFinished(true);
+      return;
     }
 
-    // Auto-navigate to results after a short delay
+    const result = analyzeAttempt(
+      attemptStrokes, 
+      template.guidePoints, 
+      activity?.type || 'follow_line',
+      30, // threshold
+      template.laneWidth || 60
+    );
+    setMetrics(result);
+    setIsFinished(true);
+    
+    if (activity) {
+      completeActivity(activity.id, result);
+    }
+
+    // Navigate to results after delay
     setTimeout(() => {
       router.push('/results');
-    }, 1500);
+    }, 3000);
   };
 
-  const getTemplate = () => {
-    if (activity?.id === '1') return TEMPLATE_LINE;
-    if (activity?.id === '5') return TEMPLATE_CURVE;
-    return TEMPLATE_S;
+  const resetActivity = () => {
+    setAttemptStrokes([]);
+    setMetrics(null);
+    setIsFinished(false);
   };
 
   if (!activity) return null;
 
   return (
     <View style={styles.container}>
+      <FeedbackOverlay 
+        isVisible={showFeedback} 
+        message={feedbackMsg} 
+        onFinished={() => setShowFeedback(false)} 
+      />
+
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <ChevronLeft size={24} color="#4A4A4A" strokeWidth={2.5} />
@@ -60,7 +106,7 @@ export default function DrawingActivityScreen() {
 
         <View style={styles.progressPill}>
           <Text style={styles.starText}>★</Text>
-          <Text style={styles.progressText}>3/5</Text>
+          <Text style={styles.progressText}>{state.completedActivities.length}/6</Text>
         </View>
       </View>
 
@@ -70,9 +116,11 @@ export default function DrawingActivityScreen() {
 
       <View style={styles.canvasWrapper}>
         <DrawingCanvas
-          templatePath={getTemplate()}
-          onComplete={handleComplete}
+          templatePath={template?.path}
+          onStrokeComplete={handleStrokeComplete}
           strokeColor={activity.color}
+          initialStrokes={attemptStrokes}
+          key={isFinished ? 'finished' : 'drawing'} 
         />
 
         <TouchableOpacity style={styles.fabBtn}>
@@ -84,7 +132,14 @@ export default function DrawingActivityScreen() {
             <Animated.View entering={FadeInUp} style={styles.successModal}>
               <CheckCircle2 size={100} color={Colors.primary.sage} />
               <Text style={styles.successText}>¡Increíble trazo!</Text>
-              <Text style={styles.accuracyText}>{accuracy}% de precisión</Text>
+              {metrics && (
+                <View style={styles.metricsRow}>
+                  <Text style={styles.accuracyText}>{metrics.accuracy}% precisión</Text>
+                  {metrics.departures !== undefined && metrics.departures > 0 && (
+                    <Text style={styles.departuresText}>{metrics.departures} salidas</Text>
+                  )}
+                </View>
+              )}
             </Animated.View>
           </Animated.View>
         )}
@@ -95,11 +150,7 @@ export default function DrawingActivityScreen() {
           <View style={[styles.toolIcon, { backgroundColor: activity.color }]} />
         </View>
 
-        <TouchableOpacity style={styles.tool} onPress={() => { }}>
-          <View style={[styles.toolIcon, { backgroundColor: Colors.primary.sage, opacity: 0.3 }]} />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.tool} onPress={() => { }}>
+        <TouchableOpacity style={styles.tool} onPress={resetActivity}>
           <RotateCcw size={24} color={Colors.text.dark} />
         </TouchableOpacity>
 
@@ -111,9 +162,13 @@ export default function DrawingActivityScreen() {
 
         <TouchableOpacity
           style={styles.doneBtn}
-          onPress={() => handleComplete(88)}
+          onPress={handleFinish}
+          disabled={attemptStrokes.length === 0}
         >
-          <CheckCircle2 size={32} color={Colors.primary.coral} />
+          <CheckCircle2 
+            size={44} 
+            color={attemptStrokes.length > 0 ? Colors.primary.coral : Colors.text.light} 
+          />
         </TouchableOpacity>
       </View>
     </View>
@@ -231,6 +286,17 @@ const styles = StyleSheet.create({
     color: Colors.primary.sage,
     fontWeight: '600',
     marginTop: 8,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  departuresText: {
+    fontSize: Typography.sizes.body,
+    color: Colors.primary.coral,
+    fontWeight: '600',
   },
   toolbar: {
     padding: 32,

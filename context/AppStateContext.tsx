@@ -2,19 +2,16 @@ import React, { createContext, useContext, useState, ReactNode } from 'react';
 
 export type ActivityType = 'follow_line' | 'connect_dots' | 'copy_shape' | 'stay_inside';
 
-export interface Activity {
-  id: string;
-  type: ActivityType;
-  title: string;
-  description: string;
-  color: string;
-  difficulty: 1 | 2 | 3;
-}
+import { Activity, AttemptMetrics } from '../types/drawing';
 
 interface AppState {
   currentChildName: string;
   selectedActivity: Activity | null;
   completedActivities: string[];
+  lastAttempt: {
+    activityId: string;
+    metrics: AttemptMetrics;
+  } | null;
   settings: {
     soundEnabled: boolean;
     language: 'es' | 'en';
@@ -24,7 +21,7 @@ interface AppState {
 interface AppStateContextType {
   state: AppState;
   selectActivity: (activity: Activity) => void;
-  completeActivity: (id: string) => void;
+  completeActivity: (id: string, metrics: AttemptMetrics) => void;
   updateSettings: (settings: Partial<AppState['settings']>) => void;
 }
 
@@ -35,6 +32,7 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
     currentChildName: 'Pequeño explorador',
     selectedActivity: null,
     completedActivities: [],
+    lastAttempt: null,
     settings: {
       soundEnabled: true,
       language: 'es',
@@ -42,13 +40,14 @@ export const AppStateProvider = ({ children }: { children: ReactNode }) => {
   });
 
   const selectActivity = (activity: Activity) => {
-    setState(prev => ({ ...prev, selectedActivity: activity }));
+    setState(prev => ({ ...prev, selectedActivity: activity, lastAttempt: null }));
   };
 
-  const completeActivity = (id: string) => {
+  const completeActivity = (id: string, metrics: AttemptMetrics) => {
     setState(prev => ({
       ...prev,
-      completedActivities: [...new Set([...prev.completedActivities, id])]
+      completedActivities: [...new Set([...prev.completedActivities, id])],
+      lastAttempt: { activityId: id, metrics }
     }));
   };
 

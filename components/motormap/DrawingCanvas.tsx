@@ -1,119 +1,169 @@
-import React, { useState, useRef } from 'react';
-import { View, StyleSheet, Dimensions, Platform } from 'react-native';
-import { Svg, Path, Circle, G } from 'react-native-svg';
+import React, { useState, useCallback, useRef } from 'react';
+import { View, StyleSheet, LayoutChangeEvent } from 'react-native';
+import { Svg, Path, G } from 'react-native-svg';
 import { 
   Gesture, 
-  GestureDetector, 
-  GestureHandlerRootView 
+  GestureDetector 
 } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedProps } from 'react-native-reanimated';
+import Animated, { 
+  useSharedValue, 
+  useAnimatedProps, 
+  runOnJS 
+} from 'react-native-reanimated';
 import { Colors } from '../../constants/Colors';
+import { Stroke, Point } from '../../types/drawing';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
-interface Point {
-  x: number;
-  y: number;
-}
-
 interface DrawingCanvasProps {
-  templatePath: string;
-  onComplete: (accuracy: number) => void;
+  templatePath?: string;
+  onStrokeComplete?: (stroke: Stroke) => void;
   strokeColor?: string;
+  strokeWidth?: number;
+  initialStrokes?: Stroke[];
 }
 
 export default function DrawingCanvas({ 
   templatePath, 
-  onComplete, 
-  strokeColor = Colors.primary.sage 
+  onStrokeComplete, 
+  strokeColor = Colors.primary.sage,
+  strokeWidth = 10,
+  initialStrokes = []
 }: DrawingCanvasProps) {
-  const [paths, setPaths] = useState<string[]>([]);
-  const [currentPath, setCurrentPath] = useState<string>('');
-  const [isDrawing, setIsDrawing] = useState(false);
+  const [strokes, setStrokes] = useState<Stroke[]>(initialStrokes);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   
-  // Points for accuracy calculation
-  const pointsRef = useRef<Point[]>([]);
+  // Active drawing state in Shared Values for performance
+  const activePath = useSharedValue('');
+  const activePoints = useSharedValue<Point[]>([]);
+  const startTime = useSharedValue(0);
+
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setCanvasSize({ width, height });
+  }, []);
+
+  const finalizeStroke = (id: string, points: Point[], start: number) => {
+    const newStroke: Stroke = {
+      id,
+      points,
+      startTime: start,
+      endTime: Date.now(),
+      color: strokeColor,
+      width: strokeWidth,
+    };
+    
+    setStrokes(prev => [...prev, newStroke]);
+    if (onStrokeComplete) {
+      onStrokeComplete(newStroke);
+    }
+    
+    // Clear active path
+    activePath.value = '';
+    activePoints.value = [];
+  };
 
   const panGesture = Gesture.Pan()
     .onStart((g) => {
-      setIsDrawing(true);
-      const newPath = `M ${g.x} ${g.y}`;
-      setCurrentPath(newPath);
-      pointsRef.current = [{ x: g.x, y: g.y }];
+      const scaleX = 600 / canvasSize.width;
+      const scaleY = 800 / canvasSize.height;
+      const x = g.x * scaleX;
+      const y = g.y * scaleY;
+
+      const now = Date.now();
+      startTime.value = now;
+      const startPoint = { x, y, t: 0 };
+      activePoints.value = [startPoint];
+      activePath.value = `M ${x} ${y}`;
     })
     .onUpdate((g) => {
-      setCurrentPath((prev) => `${prev} L ${g.x} ${g.y}`);
-      pointsRef.current.push({ x: g.x, y: g.y });
+      const scaleX = 600 / canvasSize.width;
+      const scaleY = 800 / canvasSize.height;
+      const x = g.x * scaleX;
+      const y = g.y * scaleY;
+
+      const t = Date.now() - startTime.value;
+      const newPoint = { x, y, t };
+      
+      // Update shared values (Worklet thread)
+      activePoints.value = [...activePoints.value, newPoint];
+      activePath.value += ` L ${x} ${y}`;
     })
     .onEnd(() => {
-      setPaths((prev) => [...prev, currentPath]);
-      setCurrentPath('');
-      setIsDrawing(false);
+      const id = `stroke-${Date.now()}`;
+      const points = activePoints.value;
+      const start = startTime.value;
       
-      // Basic simulation of completion after one long stroke for now
-      if (pointsRef.current.length > 20) {
-        setTimeout(() => onComplete(92), 500);
-      }
+      runOnJS(finalizeStroke)(id, points, start);
     });
 
-  const clear = () => {
-    setPaths([]);
-    setCurrentPath('');
-    pointsRef.current = [];
-  };
+  const animatedProps = useAnimatedProps(() => ({
+    d: activePath.value,
+  }));
 
+  const clear = useCallback(() => {
+    setStrokes([]);
+    activePath.value = '';
+    activePoints.value = [];
+  }, [activePath, activePoints]);
+
+  // Expose clear method via ref if needed, but for now we can just use props or internal state
+  
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={onLayout}>
       <GestureDetector gesture={panGesture}>
         <View style={styles.svgContainer}>
-          <Svg style={StyleSheet.absoluteFill}>
-            {/* Template Path - Hint Path from HTML */}
-            <Path
-              d={templatePath}
-              stroke="#F0F0F0"
-              strokeWidth={40}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              fill="none"
-            />
-            {/* Inner guide line - Dot Path from HTML */}
-            <Path
-              d={templatePath}
-              stroke={Colors.primary.sky}
-              strokeWidth={4}
-              strokeDasharray="8, 12"
-              strokeLinecap="round"
-              fill="none"
-            />
-            
-            {/* User Paths - User Trace from HTML */}
-            {paths.map((p, i) => (
-              <G key={`path-${i}`}>
+          {canvasSize.width > 0 && (
+            <Svg viewBox="0 0 600 800" style={StyleSheet.absoluteFill}>
+              {/* Guide Template */}
+              {templatePath && (
+                <G>
+                  <Path
+                    d={templatePath}
+                    stroke="#F0F0F0"
+                    strokeWidth={strokeWidth * 4}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                  <Path
+                    d={templatePath}
+                    stroke={Colors.primary.sky}
+                    strokeWidth={2}
+                    strokeDasharray="10, 10"
+                    strokeLinecap="round"
+                    fill="none"
+                    opacity={0.5}
+                  />
+                </G>
+              )}
+              
+              {/* Completed Strokes */}
+              {strokes.map((stroke) => (
                 <Path
-                  d={p}
-                  stroke={strokeColor}
-                  strokeWidth={10}
+                  key={stroke.id}
+                  d={stroke.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')}
+                  stroke={stroke.color}
+                  strokeWidth={stroke.width}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   fill="none"
                   opacity={0.9}
                 />
-              </G>
-            ))}
-            
-            {/* Active Path */}
-            {currentPath ? (
-              <Path
-                d={currentPath}
+              ))}
+              
+              {/* Active Stroke */}
+              <AnimatedPath
+                animatedProps={animatedProps}
                 stroke={strokeColor}
-                strokeWidth={10}
+                strokeWidth={strokeWidth}
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 fill="none"
                 opacity={0.9}
               />
-            ) : null}
-          </Svg>
+            </Svg>
+          )}
         </View>
       </GestureDetector>
     </View>

@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./public/placeholder-logo.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./public/placeholder-logo.png",
       "resizeMode": "contain",
@@ -19,7 +19,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./public/placeholder-logo.png",
         "backgroundColor": "#FFFBF0"
-      }
+      },
+      "package": "com.anonymous.motormap"
     },
     "web": {
       "favicon": "./public/placeholder-logo.png",

@@ -4,7 +4,9 @@ import { useRouter } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import { Spacing } from '../../constants/Spacing';
-import { useAppState, Activity } from '../../context/AppStateContext';
+import { useAppState } from '../../context/AppStateContext';
+import { Activity } from '../../types/drawing';
+import { LEVELS } from '../../constants/Levels';
 import {
   ChevronLeft,
   Map,
@@ -72,7 +74,15 @@ export default function ActivitySelectionScreen() {
 
   const handleSelect = (activity: Activity) => {
     selectActivity(activity);
-    router.push('/activities/drawing');
+    const hasLevels = LEVELS[activity.id] && LEVELS[activity.id].length > 0;
+    if (hasLevels) {
+      router.push({
+        pathname: '/activities/levels',
+        params: { activityId: activity.id }
+      });
+    } else {
+      router.push('/activities/drawing');
+    }
   };
 
   const getIcon = (type: string, color: string) => {

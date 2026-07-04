@@ -5,6 +5,7 @@ import { Colors } from '../constants/Colors';
 import { Typography } from '../constants/Typography';
 import { Spacing } from '../constants/Spacing';
 import { useAppState } from '../context/AppStateContext';
+import { LEVELS } from '../constants/Levels';
 import { Button } from '../components/ui/Button';
 import {
   Trophy,
@@ -17,8 +18,33 @@ import Animated, { FadeInUp, ZoomIn } from 'react-native-reanimated';
 
 export default function ResultsScreen() {
   const router = useRouter();
-  const { state } = useAppState();
+  const { state, selectLevel } = useAppState();
   const activity = state.selectedActivity;
+  const level = state.selectedLevel;
+
+  const handleNext = () => {
+    if (activity && level) {
+      const activityLevels = LEVELS[activity.id] || [];
+      const currentIdx = activityLevels.findIndex(l => l.id === level.id);
+      if (currentIdx !== -1 && currentIdx < activityLevels.length - 1) {
+        // Unlock logic handled in state context already, select the next level and go to drawing
+        const nextLevel = activityLevels[currentIdx + 1];
+        selectLevel(nextLevel);
+        router.replace('/activities/drawing');
+        return;
+      }
+    }
+
+    // Go back to levels list if levels exist, otherwise activities main list
+    if (activity && LEVELS[activity.id]?.length > 0) {
+      router.replace({
+        pathname: '/activities/levels',
+        params: { activityId: activity.id }
+      });
+    } else {
+      router.replace('/activities');
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -29,7 +55,9 @@ export default function ResultsScreen() {
 
       <Animated.View entering={FadeInUp.delay(600)} style={styles.textContainer}>
         <Text style={styles.title}>¡Felicidades!</Text>
-        <Text style={styles.subtitle}>Has completado: {activity?.title}</Text>
+        <Text style={styles.subtitle}>
+          Has completado: {level ? `${activity?.title} - ${level.name}` : activity?.title}
+        </Text>
 
         <View style={styles.starsRow}>
           {state.lastAttempt && (
@@ -58,7 +86,7 @@ export default function ResultsScreen() {
 
         <Button
           title="Siguiente"
-          onPress={() => router.replace('/activities')}
+          onPress={handleNext}
           icon={<ChevronRight size={20} color="white" />}
           style={styles.btn}
         />

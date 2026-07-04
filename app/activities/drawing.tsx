@@ -2,18 +2,15 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '../../constants/Colors';
-import { Typography } from '../../constants/Typography';
-import { Spacing } from '../../constants/Spacing';
 import { useAppState } from '../../context/AppStateContext';
 import DrawingCanvas from '../../components/motormap/DrawingCanvas';
 import FeedbackOverlay from '../../components/motormap/FeedbackOverlay';
-import {
-  RotateCcw,
-  HelpCircle,
-  CheckCircle2,
-  ChevronLeft
-} from 'lucide-react-native';
-import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
+import GameHeader from '../../components/motormap/GameHeader';
+import GameInstructions from '../../components/motormap/GameInstructions';
+import GameToolbar from '../../components/motormap/GameToolbar';
+import SuccessModal from '../../components/motormap/SuccessModal';
+import { Svg, Path } from 'react-native-svg';
+import { HelpCircle } from 'lucide-react-native';
 import { Stroke, AttemptMetrics } from '../../types/drawing';
 import { analyzeAttempt } from '../../lib/TraceAnalysis';
 import { TEMPLATES } from '../../constants/Templates';
@@ -27,7 +24,8 @@ const FEEDBACK_MESSAGES = [
 
 export default function DrawingActivityScreen() {
   const router = useRouter();
-  const { state, completeActivity } = useAppState();
+  const { state, completeActivity, completeLevel } = useAppState();
+  const level = state.selectedLevel;
   const [isFinished, setIsFinished] = useState(false);
   const [attemptStrokes, setAttemptStrokes] = useState<Stroke[]>([]);
   const [metrics, setMetrics] = useState<AttemptMetrics | null>(null);
@@ -36,13 +34,47 @@ export default function DrawingActivityScreen() {
 
   const activity = state.selectedActivity;
 
-  // Find template based on activity
+  // Initialize brush color using the activity theme color
+  const [brushColor, setBrushColor] = useState(activity?.color || Colors.primary.sage);
+
+  // Map each of the 6 activities to their templates
   const template = useMemo(() => {
-    if (activity?.id === '1') return TEMPLATES['line-simple'];
-    if (activity?.id === '5') return TEMPLATES['curve-basic'];
-    if (activity?.id === '2') return TEMPLATES['lane-s'];
+    if (level) return level;
+    if (!activity) return null;
+    if (activity.id === '1') return TEMPLATES['line-simple'];
+    if (activity.id === '2') return TEMPLATES['lane-s'];
+    if (activity.id === '3') return TEMPLATES['connect-dots-triangle'];
+    if (activity.id === '4') return TEMPLATES['copy-circle'];
+    if (activity.id === '5') return TEMPLATES['curve-rollercoaster'];
+    if (activity.id === '6') return TEMPLATES['lane-maze'];
     return null;
-  }, [activity]);
+  }, [activity, level]);
+
+  // Pick a deterministic target color for copy_shape activities when the level starts
+  const targetColor = useMemo(() => {
+    const PALETTE_COLORS = [
+      Colors.primary.sky,
+      Colors.primary.mustard,
+      Colors.primary.coral,
+      Colors.primary.sage
+    ];
+    const key = level?.id || activity?.id || '1';
+    let sum = 0;
+    for (let i = 0; i < key.length; i++) {
+      sum += key.charCodeAt(i);
+    }
+    return PALETTE_COLORS[sum % PALETTE_COLORS.length];
+  }, [level, activity]);
+
+  const getColorName = useCallback((color: string | null) => {
+    if (!color) return '';
+    const c = color.toLowerCase();
+    if (c === Colors.primary.sky.toLowerCase()) return 'Azul';
+    if (c === Colors.primary.mustard.toLowerCase()) return 'Amarillo';
+    if (c === Colors.primary.coral.toLowerCase()) return 'Rojo';
+    if (c === Colors.primary.sage.toLowerCase()) return 'Verde';
+    return '';
+  }, []);
 
   const handleStrokeComplete = useCallback((stroke: Stroke) => {
     setAttemptStrokes(prev => [...prev, stroke]);
@@ -56,7 +88,6 @@ export default function DrawingActivityScreen() {
 
   const handleFinish = () => {
     if (!template) {
-      // Free draw logic
       setIsFinished(true);
       return;
     }
@@ -66,13 +97,114 @@ export default function DrawingActivityScreen() {
       template.guidePoints, 
       activity?.type || 'follow_line',
       30, // threshold
-      template.laneWidth || 60
+      template.laneWidth || 60,
+      template.dots,
+      template.backgroundPaths
     );
-    setMetrics(result);
+
+    // Apply color matching logic for copy_shape
+    let finalMetrics = { ...result };
+    if (activity.type === 'copy_shape' && targetColor) {
+      let correctColorPoints = 0;
+      let totalPoints = 0;
+      attemptStrokes.forEach(s => {
+        const isCorrectColor = s.color.toLowerCase() === targetColor.toLowerCase();
+        s.points.forEach(() => {
+          totalPoints++;
+          if (isCorrectColor) correctColorPoints++;
+        });
+      });
+      const colorMultiplier = totalPoints > 0 ? (correctColorPoints / totalPoints) : 0;
+      // 50% of the score is shape similarity, 50% is color matching
+      finalMetrics.accuracy = Math.round(result.accuracy * (0.5 + 0.5 * colorMultiplier));
+      finalMetrics.precisionScore = finalMetrics.accuracy;
+      finalMetrics.completionScore = finalMetrics.accuracy;
+    }
+
+    setMetrics(finalMetrics);
     setIsFinished(true);
     
-    if (activity) {
-      completeActivity(activity.id, result);
+    // Define relational DB records for study export
+    const qualityFlag = (attemptStrokes.length === 0 || (finalMetrics.pointCount || 0) === 0)
+      ? 'empty'
+      : (attemptStrokes.length > 15 && (finalMetrics.totalTimeMs || 0) < 3000)
+        ? 'noisy'
+        : 'good';
+
+    const participantRecord = {
+      participantId: state.participant?.participantId || 'PARTICIPANT_01',
+      ageMonths: state.participant?.ageMonths || 72,
+      sex: state.participant?.sex || 'M',
+      dominantHand: state.participant?.dominantHand || 'right',
+      groupId: state.participant?.groupId || 'GROUP_A'
+    };
+
+    const sessionRecord = {
+      sessionId: state.session?.sessionId || `session-${Date.now()}`,
+      participantId: participantRecord.participantId,
+      deviceId: state.session?.deviceId || 'device-expo-tablet',
+      startedAt: state.session?.startedAt || new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      sessionNumber: state.session?.sessionNumber || 1
+    };
+
+    const templateId = level ? level.id : activity.id;
+    const attemptNumber = (state.attemptNumberCounter[templateId] || 0) + 1;
+
+    const attemptRecord = {
+      attemptId: finalMetrics.attemptId || `attempt-${Date.now()}`,
+      sessionId: sessionRecord.sessionId,
+      activityId: activity.id,
+      templateId: templateId,
+      attemptNumber: attemptNumber,
+      durationMs: finalMetrics.totalTimeMs || finalMetrics.duration || 0,
+      completed: finalMetrics.accuracy >= 70,
+      qualityFlag: qualityFlag
+    };
+
+    const traceDataRecord = {
+      attemptId: attemptRecord.attemptId,
+      traceJson: JSON.stringify(attemptStrokes)
+    };
+
+    const metricsRecord = {
+      attemptId: attemptRecord.attemptId,
+      strokeCount: finalMetrics.strokeCount,
+      pointCount: finalMetrics.pointCount || 0,
+      traceLength: finalMetrics.traceLength || 0,
+      meanSpeed: finalMetrics.meanSpeed || 0,
+      speedVariability: finalMetrics.speedVariability || 0,
+      pauseCount: finalMetrics.pauseCount || 0,
+      precisionScore: finalMetrics.precisionScore || 0,
+      completionScore: finalMetrics.completionScore || 0,
+      smoothnessScore: finalMetrics.smoothnessScore || 100
+    };
+
+    // Print relational logs to console matching requested variables
+    console.log("==================================================");
+    console.log("📊 REPORT: CLÍNICA DE DESARROLLO MOTOR - MOTOR MAP");
+    console.log(`Fecha: ${new Date().toISOString()}`);
+    console.log("==================================================");
+    console.log("👤 [PARTICIPANTS]");
+    console.log(JSON.stringify(participantRecord, null, 2));
+    console.log("--------------------------------------------------");
+    console.log("📅 [SESSIONS]");
+    console.log(JSON.stringify(sessionRecord, null, 2));
+    console.log("--------------------------------------------------");
+    console.log("✏️ [ATTEMPTS]");
+    console.log(JSON.stringify(attemptRecord, null, 2));
+    console.log("--------------------------------------------------");
+    console.log("📈 [METRICS]");
+    console.log(JSON.stringify(metricsRecord, null, 2));
+    console.log("--------------------------------------------------");
+    console.log("🖌️ [TRACE_DATA]");
+    console.log(JSON.stringify(traceDataRecord, null, 2));
+    console.log("==================================================");
+
+    if (level && activity) {
+      completeLevel(activity.id, level.id, finalMetrics);
+    } else if (activity) {
+      completeActivity(activity.id, finalMetrics);
     }
 
     // Navigate to results after delay
@@ -97,80 +229,92 @@ export default function DrawingActivityScreen() {
         onFinished={() => setShowFeedback(false)} 
       />
 
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <ChevronLeft size={24} color="#4A4A4A" strokeWidth={2.5} />
-        </TouchableOpacity>
+      <GameHeader
+        title={level ? level.name : activity.title}
+        onBack={() => router.back()}
+        completedCount={state.completedActivities.length}
+      />
 
-        <Text style={styles.headerTitle}>{activity.title}</Text>
+      <GameInstructions
+        description={level ? level.description : activity.description}
+        color={activity.color}
+      />
 
-        <View style={styles.progressPill}>
-          <Text style={styles.starText}>★</Text>
-          <Text style={styles.progressText}>{state.completedActivities.length}/6</Text>
-        </View>
-      </View>
+      <View style={[styles.canvasWrapper, activity.type === 'copy_shape' && styles.splitCanvasWrapper]}>
+        {activity.type === 'copy_shape' && template ? (
+          <View style={styles.copyLayout}>
+            {/* Top: Reference card */}
+            <View style={styles.copyReferenceContainer}>
+              <View style={styles.copyReferenceHeader}>
+                <Text style={styles.copyReferenceLabel}>Modelo a copiar</Text>
+                <View style={[styles.copyReferenceColorIndicator, { backgroundColor: targetColor }]} />
+                <Text style={styles.copyColorName}>({getColorName(targetColor)})</Text>
+              </View>
+              <View style={styles.copyReferenceBody}>
+                <Svg viewBox="0 0 600 800" style={StyleSheet.absoluteFill}>
+                  <Path
+                    d={template.path}
+                    stroke={targetColor}
+                    strokeWidth={20}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                </Svg>
+              </View>
+            </View>
 
-      <View style={styles.instructionContainer}>
-        <Text style={styles.instructionText}>{activity.description}</Text>
-      </View>
+            {/* Bottom: Drawing area */}
+            <View style={styles.copyCanvasContainer}>
+              <DrawingCanvas
+                templatePath={undefined}
+                onStrokeComplete={handleStrokeComplete}
+                strokeColor={brushColor}
+                initialStrokes={attemptStrokes}
+                laneWidth={template?.laneWidth}
+                dots={template?.dots}
+                backgroundPaths={template?.backgroundPaths}
+                showDashedLine={template?.showDashedLine}
+                isMaze={activity?.id === '6'}
+                key={isFinished ? 'finished' : 'drawing'} 
+              />
+            </View>
+          </View>
+        ) : (
+          <DrawingCanvas
+            templatePath={template?.path}
+            onStrokeComplete={handleStrokeComplete}
+            strokeColor={brushColor}
+            initialStrokes={attemptStrokes}
+            laneWidth={template?.laneWidth}
+            dots={template?.dots}
+            backgroundPaths={template?.backgroundPaths}
+            showDashedLine={template?.showDashedLine}
+            startPoint={template?.guidePoints && template.guidePoints.length > 0 ? template.guidePoints[0] : undefined}
+            endPoint={template?.guidePoints && template.guidePoints.length > 0 ? template.guidePoints[template.guidePoints.length - 1] : undefined}
+            isMaze={activity?.id === '6'}
+            key={isFinished ? 'finished' : 'drawing'} 
+          />
+        )}
 
-      <View style={styles.canvasWrapper}>
-        <DrawingCanvas
-          templatePath={template?.path}
-          onStrokeComplete={handleStrokeComplete}
-          strokeColor={activity.color}
-          initialStrokes={attemptStrokes}
-          key={isFinished ? 'finished' : 'drawing'} 
-        />
-
-        <TouchableOpacity style={styles.fabBtn}>
+        <TouchableOpacity style={styles.fabBtn} activeOpacity={0.8}>
           <HelpCircle size={32} color="white" />
         </TouchableOpacity>
 
-        {isFinished && (
-          <Animated.View entering={FadeIn} style={styles.successOverlay}>
-            <Animated.View entering={FadeInUp} style={styles.successModal}>
-              <CheckCircle2 size={100} color={Colors.primary.sage} />
-              <Text style={styles.successText}>¡Increíble trazo!</Text>
-              {metrics && (
-                <View style={styles.metricsRow}>
-                  <Text style={styles.accuracyText}>{metrics.accuracy}% precisión</Text>
-                  {metrics.departures !== undefined && metrics.departures > 0 && (
-                    <Text style={styles.departuresText}>{metrics.departures} salidas</Text>
-                  )}
-                </View>
-              )}
-            </Animated.View>
-          </Animated.View>
-        )}
+        <SuccessModal
+          isVisible={isFinished}
+          metrics={metrics}
+          activityType={activity.type}
+        />
       </View>
 
-      <View style={styles.toolbar}>
-        <View style={[styles.tool, styles.toolActive]}>
-          <View style={[styles.toolIcon, { backgroundColor: activity.color }]} />
-        </View>
-
-        <TouchableOpacity style={styles.tool} onPress={resetActivity}>
-          <RotateCcw size={24} color={Colors.text.dark} />
-        </TouchableOpacity>
-
-        <View style={{ width: 24 }} />
-
-        <View style={[styles.colorPicker, { backgroundColor: Colors.primary.sky }]} />
-        <View style={[styles.colorPicker, { backgroundColor: Colors.primary.mustard, marginLeft: -20, zIndex: 2 }]} />
-        <View style={[styles.colorPicker, { backgroundColor: activity.color, marginLeft: -20, zIndex: 3, borderColor: 'white', borderWidth: 4 }]} />
-
-        <TouchableOpacity
-          style={styles.doneBtn}
-          onPress={handleFinish}
-          disabled={attemptStrokes.length === 0}
-        >
-          <CheckCircle2 
-            size={44} 
-            color={attemptStrokes.length > 0 ? Colors.primary.coral : Colors.text.light} 
-          />
-        </TouchableOpacity>
-      </View>
+      <GameToolbar
+        selectedColor={brushColor}
+        onColorSelect={setBrushColor}
+        onReset={resetActivity}
+        onFinish={handleFinish}
+        hasStrokes={attemptStrokes.length > 0}
+      />
     </View>
   );
 }
@@ -180,66 +324,73 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background.cream,
   },
-  header: {
-    paddingTop: 40,
-    paddingHorizontal: 32,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  backBtn: {
-    width: 44,
-    height: 44,
-    backgroundColor: 'white',
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#F0EDE6',
-  },
-  headerTitle: {
-    flex: 1,
-    textAlign: 'center',
-    color: Colors.text.dark,
-    fontWeight: '700',
-    fontSize: 18,
-  },
-  progressPill: {
-    backgroundColor: 'white',
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1.5,
-    borderColor: '#F0EDE6',
-  },
-  starText: {
-    color: Colors.primary.mustard,
-    fontSize: 14,
-  },
-  progressText: {
-    fontSize: 13,
-    fontWeight: 'bold',
-    color: Colors.text.dark,
-  },
-  instructionContainer: {
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  instructionText: {
-    color: Colors.primary.sage,
-    fontWeight: '600',
-    fontSize: 15,
-    letterSpacing: 0.2,
-  },
   canvasWrapper: {
     flex: 1,
     marginHorizontal: 24,
     marginVertical: 10,
     position: 'relative',
+  },
+  splitCanvasWrapper: {
+    marginHorizontal: 16,
+    marginVertical: 8,
+  },
+  copyLayout: {
+    flex: 1,
+    flexDirection: 'column',
+    gap: 12,
+  },
+  copyReferenceContainer: {
+    height: 180,
+    backgroundColor: 'white',
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: '#EEEEEE',
+    overflow: 'hidden',
+    padding: 12,
+    alignItems: 'center',
+    shadowColor: Colors.ui.shadow,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  copyReferenceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
+    width: '100%',
+    gap: 8,
+  },
+  copyReferenceLabel: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: Colors.text.medium,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  copyReferenceColorIndicator: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
+  },
+  copyColorName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.text.medium,
+  },
+  copyReferenceBody: {
+    flex: 1,
+    width: '100%',
+    position: 'relative',
+    marginTop: 4,
+  },
+  copyCanvasContainer: {
+    flex: 1,
   },
   fabBtn: {
     position: 'absolute',
@@ -256,92 +407,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 20,
     elevation: 8,
-  },
-  successOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(253, 251, 247, 0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
     zIndex: 10,
   },
-  successModal: {
-    backgroundColor: 'white',
-    padding: 40,
-    borderRadius: 40,
-    alignItems: 'center',
-    shadowColor: Colors.ui.shadow,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 1,
-    shadowRadius: 20,
-    elevation: 5,
-  },
-  successText: {
-    fontSize: Typography.sizes.title1,
-    fontWeight: 'bold',
-    color: Colors.text.dark,
-    marginTop: 20,
-  },
-  accuracyText: {
-    fontSize: Typography.sizes.body,
-    color: Colors.primary.sage,
-    fontWeight: '600',
-    marginTop: 8,
-  },
-  metricsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
-    alignItems: 'center',
-  },
-  departuresText: {
-    fontSize: Typography.sizes.body,
-    color: Colors.primary.coral,
-    fontWeight: '600',
-  },
-  toolbar: {
-    padding: 32,
-    flexDirection: 'row',
-    gap: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  tool: {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'white',
-    borderWidth: 2,
-    borderColor: 'transparent',
-    shadowColor: Colors.ui.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 1,
-    shadowRadius: 12,
-    elevation: 3,
-  },
-  toolActive: {
-    borderColor: Colors.primary.peach,
-    backgroundColor: '#FFF8F4',
-  },
-  toolIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-  },
-  colorPicker: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 4,
-    borderColor: 'white',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  doneBtn: {
-    marginLeft: 16,
-  }
 });

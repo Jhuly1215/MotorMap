@@ -1,0 +1,16 @@
+export const Spacing = {
+  xs: 4,
+  sm: 8,
+  md: 16,
+  lg: 24,
+  xl: 32,
+  xxl: 48,
+  tablet_margin: 64,
+  touch_target: 56,
+  radius_sm: 8,
+  radius_md: 14,
+  radius_lg: 18,
+  radius_xl: 32,
+  radius_xxl: 48,
+  radius_full: 9999,
+};

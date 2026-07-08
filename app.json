@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "MotorMap",
+    "slug": "motormap",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/placeholder-logo.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/placeholder-logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFBF0"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.motormap"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/placeholder-logo.png",
+        "backgroundColor": "#FFFBF0"
+      },
+      "package": "com.anonymous.motormap"
+    },
+    "web": {
+      "favicon": "./assets/placeholder-logo.png",
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
